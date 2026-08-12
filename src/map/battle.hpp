@@ -720,7 +720,6 @@ struct Battle_Config
 	int32 homunculus_starving_delay;
 	int32 drop_connection_on_quit;
 	int32 mob_spawn_variance;
-	int32 mercenary_autoloot;
 	int32 mer_idle_no_share;
 	int32 idletime_mer_option;
 	int32 feature_refineui;

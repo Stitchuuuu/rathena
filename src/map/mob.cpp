@@ -2577,7 +2577,7 @@ static TIMER_FUNC(mob_delay_item_drop) {
  * Sets the item_drop into the item_drop_list.
  * Also performs logging and autoloot if enabled.
  * rate is the drop-rate of the item, required for autoloot.
- * flag : Killed only by homunculus/mercenary?
+ * flag : Killed only by homunculus?
  *------------------------------------------*/
 static void mob_item_drop(mob_data *md, std::shared_ptr<s_item_drop_list>& dlist, std::shared_ptr<s_item_drop>& ditem, int32 loot, int32 drop_rate, bool flag)
 {
@@ -2591,7 +2591,7 @@ static void mob_item_drop(mob_data *md, std::shared_ptr<s_item_drop_list>& dlist
 	if( sd == nullptr ) sd = map_charid2sd(dlist->third_charid);
 	test_autoloot = sd 
 		&& (drop_rate <= sd->state.autoloot || pc_isautolooting(sd, ditem->item_data.nameid))
-		&& (flag ? ((battle_config.homunculus_autoloot ? (battle_config.hom_idle_no_share == 0 || !pc_isidle_hom(sd)) : 0) || (battle_config.mercenary_autoloot ? (battle_config.mer_idle_no_share == 0 || !pc_isidle_mer(sd)) : 0)) :
+		&& (flag ? (battle_config.homunculus_autoloot ? (battle_config.hom_idle_no_share == 0 || !pc_isidle_hom(sd)) : 0) :
 			(battle_config.idle_no_autoloot == 0 || DIFF_TICK(last_tick, sd->idletime) < battle_config.idle_no_autoloot));
 #ifdef AUTOLOOT_DISTANCE
 		test_autoloot = test_autoloot && sd->m == md->m
@@ -2946,7 +2946,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 	int32 i, temp, count, m = md->m;
 	int32 dmgbltypes = 0;  // bitfield of all bl types, that caused damage to the mob and are elligible for exp distribution
 	t_tick tick = gettick();
-	bool rebirth, homkillonly, merckillonly;
+	bool rebirth, homkillonly;
 
 	status = &md->status;
 
@@ -3064,8 +3064,6 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 
 	// determines, if the monster was killed by homunculus' damage only
 	homkillonly = (bool)( ( dmgbltypes&BL_HOM ) && !( dmgbltypes&~BL_HOM ) );
-	// determines if the monster was killed by mercenary damage only
-	merckillonly = (bool)((dmgbltypes & BL_MER) && !(dmgbltypes & ~BL_MER));
 
 	// Determine MVP (need to do it here so that it's not influenced by first attacker bonus below)
 	map_session_data* mvp_sd = md->get_mvp_player(first_sd);
@@ -3244,7 +3242,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 	if (md->lootitems) {
 		for (i = 0; i < md->lootitem_count; i++) {
 			std::shared_ptr<s_item_drop> ditem = mob_setlootitem(md->lootitems[i], md->mob_id);
-			mob_item_drop(md, lootlist, ditem, 1, 10000, homkillonly || merckillonly);
+			mob_item_drop(md, lootlist, ditem, 1, 10000, homkillonly);
 		}
 	}
 
@@ -3268,10 +3266,10 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 		dlist->second_charid = (second_sd ? second_sd->status.char_id : 0);
 		dlist->third_charid = (third_sd ? third_sd->status.char_id : 0);
 
-		// These trigger for the killer of the monster
-		if(sd) {
+		// These trigger for the player who has the drop priority on the monster
+		if(first_sd) {
 			// process script-granted extra drop bonuses
-			for (const auto &it : sd->add_drop) {
+			for (const auto &it : first_sd->add_drop) {
 				if (!&it || (!it.nameid && !it.group))
 					continue;
 				if ((it.race < RC_NONE_ && it.race == -md->mob_id) || //Race < RC_NONE_, use mob_id
@@ -3307,15 +3305,15 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 
 					std::shared_ptr<s_item_drop> ditem = mob_setdropitem(mobdrop, 1, md->mob_id);
 
-					mob_item_drop(md, dlist, ditem, 0, mobdrop->rate, homkillonly || merckillonly);
+					mob_item_drop(md, dlist, ditem, 0, mobdrop->rate, homkillonly);
 				}
 			}
 
 			// process script-granted zeny bonus (get_zeny_num) [Skotlex]
-			if( sd->bonus.get_zeny_num && rnd()%100 < sd->bonus.get_zeny_rate ) {
-				i = sd->bonus.get_zeny_num > 0 ? sd->bonus.get_zeny_num : -md->level * sd->bonus.get_zeny_num;
+			if( first_sd->bonus.get_zeny_num && rnd()%100 < first_sd->bonus.get_zeny_rate ) {
+				i = first_sd->bonus.get_zeny_num > 0 ? first_sd->bonus.get_zeny_num : -md->level * first_sd->bonus.get_zeny_num;
 				if (!i) i = 1;
-				pc_getzeny(sd, 1+rnd()%i, LOG_TYPE_PICKDROP_MONSTER);
+				pc_getzeny(first_sd, 1+rnd()%i, LOG_TYPE_PICKDROP_MONSTER);
 			}
 		}
 
@@ -3329,7 +3327,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 			if (it == nullptr)
 				continue;
 
-			drop_rate = mob_getdroprate(src, md->db, entry->rate, drop_modifier, md);
+			drop_rate = mob_getdroprate(first_sd, md->db, entry->rate, drop_modifier, md);
 
 			// attempt to drop the item
 			if (rnd() % 10000 >= drop_rate)
@@ -3351,7 +3349,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 			}
 			// Announce first, or else ditem will be freed. [Lance]
 			// By popular demand, use base drop rate for autoloot code. [Skotlex]
-			mob_item_drop(md, dlist, ditem, 0, battle_config.autoloot_adjust ? drop_rate : entry->rate, homkillonly || merckillonly);
+			mob_item_drop(md, dlist, ditem, 0, battle_config.autoloot_adjust ? drop_rate : entry->rate, homkillonly);
 		}
 
 		// Ore Discovery (triggers if owner has loot priority, does not require to be the killer)
@@ -3365,7 +3363,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 
 				std::shared_ptr<s_item_drop> ditem = mob_setdropitem(mobdrop, 1, md->mob_id);
 
-				mob_item_drop(md, dlist, ditem, 0, mobdrop->rate, homkillonly || merckillonly);
+				mob_item_drop(md, dlist, ditem, 0, mobdrop->rate, homkillonly);
 			}
 		}
 
@@ -3394,7 +3392,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 					// 'Cheat' for autoloot command: rate is changed from n/100000 to n/10000
 					int32 map_drops_rate = max(1, (final_rate / 10));
 					std::shared_ptr<s_item_drop> ditem = mob_setdropitem( it.second, 1, md->mob_id );
-					mob_item_drop( md, dlist, ditem, 0, map_drops_rate, homkillonly || merckillonly );
+					mob_item_drop( md, dlist, ditem, 0, map_drops_rate, homkillonly );
 				}
 			}
 
@@ -3415,7 +3413,7 @@ int32 mob_dead(mob_data *md, block_list *src, int32 type)
 						// 'Cheat' for autoloot command: rate is changed from n/100000 to n/10000
 						int32 map_drops_rate = max(1, (final_rate / 10));
 						std::shared_ptr<s_item_drop> ditem = mob_setdropitem( it.second, 1, md->mob_id );
-						mob_item_drop( md, dlist, ditem, 0, map_drops_rate, homkillonly || merckillonly );
+						mob_item_drop( md, dlist, ditem, 0, map_drops_rate, homkillonly );
 					}
 				}
 			}
