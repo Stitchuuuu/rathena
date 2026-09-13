@@ -1,0 +1,252 @@
+//===== rAthena Script =======================================
+//= Unit Pilot — a GM harness for driving units from a test rig
+//===== Description: ========================================
+//= Puts rAthena's unit* script commands behind @commands so an
+//= automated client can STAGE a situation instead of waiting for
+//= the server to produce one.
+//=
+//= WHY THIS EXISTS. A headless test client can only observe what
+//= the AI happens to do. Rare states — a mob standing across a
+//= river, a slave visible while its master is not, a specific
+//= skill landing right now — may take hundreds of teleports to
+//= occur by chance, or never occur at all. Every command here
+//= exists to make one of those reachable on demand. Measured
+//= before it existed: a hunt spent 312 teleports and 104 seconds
+//= without once producing the case under test.
+//=
+//= DELIBERATELY GENERIC. Nothing below knows about any particular
+//= monster, map or test. Commands take a GID and act on it, and
+//= rAthena's unit* commands accept any block list, so this does
+//= not need editing to cover a new scenario. Add a scenario by
+//= composing calls from the client, not by adding a command here.
+//=
+//= THE ONE RULE FOR USING IT. Pilot the TERRAIN and the
+//= SUPPORTING CAST, never the AI of the unit under test. Moving a
+//= mob is faithful — its own AL_TELEPORT does exactly that, via
+//= the same unit_warp. Forcing its skill is NOT: mobskill_use
+//= filters on the mob's STATE before it ever reads the condition
+//= (mob.cpp:4319), so @uskill bypasses the very mechanism most
+//= mob behaviour rests on. Use @uskill to measure what a blow
+//= DOES; never to conclude anything about when a mob would have
+//= chosen to cast it.
+//=
+//===== Output contract: ====================================
+//= Every command answers with at least one machine-readable line
+//= via `message`, so a bot can parse instead of guessing.
+//=
+//= `message` and NOT `dispbottom`, and the difference is the whole
+//= reason a test rig can read this at all: dispbottom goes out as
+//= ZC_NPC_CHAT (clif_messagecolor), which a client that only
+//= watches for command replies never sees — measured, the lines
+//= arrived on the wire and were dropped with "no callback".
+//= `message` goes through clif_displaymessage, the same
+//= ZC_NOTIFY_PLAYERCHAT every @command answers on. Failures
+//= always start with ERR, and every command answers exactly once,
+//= so a caller branches on the prefix and never waits out a
+//= timeout to discover nothing happened.
+//=
+//=   UNIT <gid> <class> <x> <y> <hp>/<maxhp> <name>
+//=   OK <verb> <gid> [detail]
+//=   ERR <verb> <reason>
+//=
+//===== Commands: ===========================================
+//= @ulist [<name substring>]            list mobs here, WITH GIDS
+//= @uwarp <gid> <x> <y>                 teleport a unit
+//= @uwalk <gid> <x> <y>                 make it WALK there
+//= @ustop <gid>                         stop its walk and its attack
+//= @uattack <gid> <target gid>          make it attack something
+//= @uskill <gid> <skill> <lv> [target]  force a cast — see the rule
+//= @uset <gid> <field> <value>          setunitdata by field name
+//= @uget <gid> <field>                  getunitdata, one field
+//= @ukill <gid>                         kill it outright
+//=
+//= @ulist is the load-bearing one: rAthena's own @mobsearch prints
+//= positions but NOT gids, and every other command here needs a gid.
+//===== Additional Comments: ================================
+//= GM level 99 by default — it can move and kill anything on the
+//= map, so it belongs on a test server and nowhere else.
+//===========================================================
+
+-	script	unitpilot	-1,{
+
+OnInit:
+	bindatcmd "ulist", strnpcinfo(3) + "::OnList", 99, 99;
+	bindatcmd "uwarp", strnpcinfo(3) + "::OnWarp", 99, 99;
+	bindatcmd "uwalk", strnpcinfo(3) + "::OnWalk", 99, 99;
+	bindatcmd "ustop", strnpcinfo(3) + "::OnStop", 99, 99;
+	bindatcmd "uattack", strnpcinfo(3) + "::OnAttack", 99, 99;
+	bindatcmd "uskill", strnpcinfo(3) + "::OnSkill", 99, 99;
+	bindatcmd "uset", strnpcinfo(3) + "::OnSet", 99, 99;
+	bindatcmd "uget", strnpcinfo(3) + "::OnGet", 99, 99;
+	bindatcmd "ukill", strnpcinfo(3) + "::OnKill", 99, 99;
+	end;
+
+// @ulist [<name substring>]
+// One UNIT line per mob on the caller's map, gid first. The optional
+// filter is a substring of the display name, which is what a caller
+// usually has to hand ("Mistress", "Petite").
+OnList:
+	.@filter$ = (.@atcmd_numparameters > 0) ? .@atcmd_parameters$[0] : "";
+	.@map$ = strcharinfo(3);
+	.@n = getmapunits(BL_MOB, .@map$, .@gids[0]);
+	.@shown = 0;
+	freeloop(1);
+	for (.@i = 0; .@i < .@n; .@i++) {
+		.@name$ = getunitname(.@gids[.@i]);
+		if (.@filter$ != "" && compare(.@name$, .@filter$) == 0)
+			continue;
+		getunitdata .@gids[.@i], .@d;
+		message strcharinfo(0), "UNIT " + .@gids[.@i] + " " + .@d[UMOB_CLASS]
+			+ " " + .@d[UMOB_X] + " " + .@d[UMOB_Y]
+			+ " " + .@d[UMOB_HP] + "/" + .@d[UMOB_MAXHP]
+			+ " " + .@name$;
+		.@shown++;
+	}
+	freeloop(0);
+	// Always terminated, so a caller reads until this line rather than
+	// waiting out a timeout to discover the list was empty.
+	message strcharinfo(0), "OK ulist " + .@shown + " of " + .@n + " on " + .@map$;
+	end;
+
+// @uwarp <gid> <x> <y>
+// The faithful way to relocate a mob: this is the same unit_warp its own
+// AL_TELEPORT uses, so the result is a state the server produces anyway.
+OnWarp:
+	if (.@atcmd_numparameters < 3) { message strcharinfo(0), "ERR uwarp usage: @uwarp <gid> <x> <y>"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uwarp")) end;
+	unitwarp .@gid, strcharinfo(3), atoi(.@atcmd_parameters$[1]), atoi(.@atcmd_parameters$[2]);
+	// Echo where it ACTUALLY is, not where we asked: unit_warp lands on a
+	// free cell near the target when the exact one is taken or unwalkable,
+	// and a caller that assumed its request held would be wrong about it.
+	getunitdata .@gid, .@d;
+	message strcharinfo(0), "OK uwarp " + .@gid + " " + .@d[UMOB_X] + " " + .@d[UMOB_Y];
+	end;
+
+// @uwalk <gid> <x> <y>
+// A real walk rather than a warp, for when the point is that the unit
+// moves through the world and its own AI sees it happen.
+OnWalk:
+	if (.@atcmd_numparameters < 3) { message strcharinfo(0), "ERR uwalk usage: @uwalk <gid> <x> <y>"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uwalk")) end;
+	unitwalk .@gid, atoi(.@atcmd_parameters$[1]), atoi(.@atcmd_parameters$[2]);
+	message strcharinfo(0), "OK uwalk " + .@gid;
+	end;
+
+OnStop:
+	if (.@atcmd_numparameters < 1) { message strcharinfo(0), "ERR ustop usage: @ustop <gid>"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "ustop")) end;
+	unitstopwalk .@gid;
+	unitstopattack .@gid;
+	message strcharinfo(0), "OK ustop " + .@gid;
+	end;
+
+// @uattack <gid> <target gid>
+// Hands the unit a target the honest way — through unit_attack, so its
+// own state machine runs from there. This is the one piece of "AI
+// piloting" that is safe, because it supplies only what a player
+// standing in front of it would have supplied.
+OnAttack:
+	if (.@atcmd_numparameters < 2) { message strcharinfo(0), "ERR uattack usage: @uattack <gid> <target gid>"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uattack")) end;
+	unitattack .@gid, atoi(.@atcmd_parameters$[1]);
+	message strcharinfo(0), "OK uattack " + .@gid + " " + .@atcmd_parameters$[1];
+	end;
+
+// @uskill <gid> <skill id|name> <lv> [target gid]
+// FORCES a cast, bypassing mobskill_use's state and condition checks.
+// Good for measuring what a blow does on demand; NOT evidence about when
+// a mob would have chosen it. Self-target by default.
+OnSkill:
+	if (.@atcmd_numparameters < 3) { message strcharinfo(0), "ERR uskill usage: @uskill <gid> <skill> <lv> [target]"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uskill")) end;
+	.@lv = atoi(.@atcmd_parameters$[2]);
+	.@tid = (.@atcmd_numparameters > 3) ? atoi(.@atcmd_parameters$[3]) : .@gid;
+	// Numeric ids and skill constant names both work, so a caller passes
+	// whichever it already has and needs no lookup table.
+	.@sk = atoi(.@atcmd_parameters$[1]);
+	if (.@sk > 0)
+		unitskilluseid .@gid, .@sk, .@lv, .@tid;
+	else
+		unitskilluseid .@gid, .@atcmd_parameters$[1], .@lv, .@tid;
+	message strcharinfo(0), "OK uskill " + .@gid + " " + .@atcmd_parameters$[1] + " lv" + .@lv + " -> " + .@tid;
+	end;
+
+// @uset <gid> <field> <value>
+// Named fields rather than raw UMOB_* indexes, so a caller does not have
+// to carry rAthena's enum ordering. `hp` is the one that earns its keep:
+// it brings an HP-gated mob skill within reach without spending minutes
+// grinding the target down to the threshold.
+OnSet:
+	if (.@atcmd_numparameters < 3) { message strcharinfo(0), "ERR uset usage: @uset <gid> <field> <value> — fields: " + callfunc("F_UnitPilotFields"); end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uset")) end;
+	.@f = callsub(S_Field, .@atcmd_parameters$[1]);
+	if (.@f < 0) { message strcharinfo(0), "ERR uset unknown field " + .@atcmd_parameters$[1]; end; }
+	setunitdata .@gid, .@f, atoi(.@atcmd_parameters$[2]);
+	// Read back rather than echo the request: setunitdata clamps, and a
+	// silently clamped value is exactly the kind of thing a staged test
+	// would then blame on the code under test.
+	getunitdata .@gid, .@d;
+	message strcharinfo(0), "OK uset " + .@gid + " " + .@atcmd_parameters$[1] + " " + .@d[.@f];
+	end;
+
+OnGet:
+	if (.@atcmd_numparameters < 2) { message strcharinfo(0), "ERR uget usage: @uget <gid> <field> — fields: " + callfunc("F_UnitPilotFields"); end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uget")) end;
+	.@f = callsub(S_Field, .@atcmd_parameters$[1]);
+	if (.@f < 0) { message strcharinfo(0), "ERR uget unknown field " + .@atcmd_parameters$[1]; end; }
+	getunitdata .@gid, .@d;
+	message strcharinfo(0), "OK uget " + .@gid + " " + .@atcmd_parameters$[1] + " " + .@d[.@f];
+	end;
+
+OnKill:
+	if (.@atcmd_numparameters < 1) { message strcharinfo(0), "ERR ukill usage: @ukill <gid>"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "ukill")) end;
+	unitkill .@gid;
+	message strcharinfo(0), "OK ukill " + .@gid;
+	end;
+
+// Does this GID resolve? getunitname answers "Unknown" for one that does
+// not, and a failed buildin only warns and lets the script carry on
+// (script.cpp:4134) — so this is a test and not a trap. Prints the ERR
+// line itself so every caller reports the same way.
+S_Missing:
+	if (getunitname(getarg(0)) == "Unknown") {
+		message strcharinfo(0), "ERR " + getarg(1) + " no unit " + getarg(0);
+		return 1;
+	}
+	return 0;
+
+// Field name -> UMOB_* index, or -1. One list, so @uset and @uget can
+// never disagree about what a name means.
+S_Field:
+	if (getarg(0) == "hp") return UMOB_HP;
+	if (getarg(0) == "maxhp") return UMOB_MAXHP;
+	if (getarg(0) == "speed") return UMOB_SPEED;
+	if (getarg(0) == "mode") return UMOB_MODE;
+	if (getarg(0) == "level") return UMOB_LEVEL;
+	if (getarg(0) == "size") return UMOB_SIZE;
+	if (getarg(0) == "ai") return UMOB_AI;
+	if (getarg(0) == "dmgimmune") return UMOB_DMGIMMUNE;
+	if (getarg(0) == "lookdir") return UMOB_LOOKDIR;
+	if (getarg(0) == "x") return UMOB_X;
+	if (getarg(0) == "y") return UMOB_Y;
+	if (getarg(0) == "class") return UMOB_CLASS;
+	if (getarg(0) == "masteraid") return UMOB_MASTERAID;
+	if (getarg(0) == "atkrange") return UMOB_ATKRANGE;
+	return -1;
+}
+
+// Kept next to S_Field so the usage line and the switch are edited
+// together — a usage string that drifts from what is accepted is worse
+// than none, because it is believed.
+function	script	F_UnitPilotFields	{
+	return "hp maxhp speed mode level size ai dmgimmune lookdir x y class masteraid atkrange";
+}
