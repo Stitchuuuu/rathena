@@ -241,6 +241,12 @@ S_Field:
 	if (getarg(0) == "class") return UMOB_CLASS;
 	if (getarg(0) == "masteraid") return UMOB_MASTERAID;
 	if (getarg(0) == "atkrange") return UMOB_ATKRANGE;
+	// Read-only in practice: writing 0 calls mob_unlocktarget and writing a
+	// bad gid fails the buildin (script.cpp), but the reason this exists is
+	// @uget — target_id is the only live window into whether a mob is still
+	// locked on (mob.cpp:1986) or has dropped to idle (mob.cpp:1655-1657),
+	// and no stock atcommand prints it.
+	if (getarg(0) == "targetid") return UMOB_TARGETID;
 	return -1;
 }
 
@@ -248,5 +254,5 @@ S_Field:
 // together — a usage string that drifts from what is accepted is worse
 // than none, because it is believed.
 function	script	F_UnitPilotFields	{
-	return "hp maxhp speed mode level size ai dmgimmune lookdir x y class masteraid atkrange";
+	return "hp maxhp speed mode level size ai dmgimmune lookdir x y class masteraid atkrange targetid";
 }
