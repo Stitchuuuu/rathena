@@ -1,0 +1,38 @@
+//===== rAthena Script =======================================
+//= Progress-bar probe — TEST SERVER ONLY
+//===== Description: =========================================
+//= @bartest [seconds]  opens a `progressbar` on the caller and
+//= says so when it completes.
+//=
+//= Exists to answer one question about the CLIENT, not the
+//= server: `progressbar` parks the script and sets
+//= sd->progressbar.npc_id + WIP_DISABLE_ALL, and only the
+//= client's CZ_PROGRESS clears them (clif.cpp:11343-11345).
+//= A walk request ABORTS the bar (clif.cpp:11390-11392) but
+//= clears nothing. So a client that stays silent on the abort
+//= leaves the character unable to cast and gets its next
+//= @command broadcast as public chat.
+//=
+//= Probe: @bartest 60 -> /move -> @bartest again.
+//= Executed  = the script was released.
+//= Shouted as public chat = it was not.
+//===== Additional Comments: =================================
+//= Mirrors the shape of the cyro-side @afk script closely
+//= enough for the packet exchange, and nothing else: no
+//= points, no seat check, no toggle.
+//============================================================
+
+-	script	bartest	-1,{
+
+OnInit:
+	bindatcmd "bartest", strnpcinfo(3) + "::OnBar", 0, 99;
+	end;
+
+OnBar:
+	.@sec = atoi(.@atcmd_parameters$[0]);
+	if (.@sec <= 0) .@sec = 60;
+	dispbottom "[BAR] parked for " + .@sec + "s — move to abort, or wait it out.";
+	progressbar "0x00FF00", .@sec;
+	dispbottom "[BAR] completed — script resumed.";
+	end;
+}

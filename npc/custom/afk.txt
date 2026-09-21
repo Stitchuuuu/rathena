@@ -1,0 +1,121 @@
+//===== rAthena Script =======================================
+//= @afk — AFK point farming.  TEST SERVER ONLY.
+//===== Description: =========================================
+//= Local stand-in for the cyro-side @afk script, which is not
+//= public (searched 2026-09-21: every published AFK-points
+//= script is idle-timer / autotrade based — checkvending(),
+//= @afkpoints, a BaseLevel gate — none is seated+progressbar).
+//=
+//= This is NOT a guess at that script. It reproduces the four
+//= messages recorded off the live server over six days, which
+//= are quoted verbatim in
+//=   roBrowserLegacy-Node/src/Node/routines/afk-parse.js
+//= and which the Node client's parser matches on. Reproducing
+//= the capture is the point; inventing plausible mechanics is
+//= exactly what would make the fixture useless.
+//=
+//= Behaviour, and why it is shaped this way:
+//=  - The character must be SEATED. The server's own text says
+//=    so, and routines/Afk.js sits before every send.
+//=  - A `progressbar` holds the session. That is what makes
+//=    @afk unlike the public scripts: while it runs,
+//=    sd->progressbar.npc_id is set, so EVERY skill and item is
+//=    refused (WIP_DISABLE_ALL, script.cpp:22534-22536 ->
+//=    clif.cpp:12908) and the next @command is broadcast as
+//=    public chat instead of being run.
+//=  - Therefore @afk CANNOT cancel a running session directly:
+//=    is_atcommand() refuses while npc_id is set. The cancel is
+//=    move -> the server aborts the bar
+//=    (clif_parse_WalkToXY, clif.cpp:11390-11392) -> the client
+//=    answers CZ_PROGRESS -> @afk is accepted again and toggles
+//=    the session off. That is the operator's own sequence, and
+//=    it is the only order the server permits.
+//=  - An aborted bar ENDs this script (clif_parse_progressbar
+//=    sets st->state = CLOSE when answered early), so the
+//=    "you moved" line cannot be printed from below the
+//=    progressbar call. A timer armed alongside it reports that
+//=    case instead.
+//===== Commands: ============================================
+//= @afk            start a session, or cancel the one marked
+//=                 active (move first — see above)
+//= @afkpoints      how many points this account holds
+//= @afkdur <sec>   GM only: shorten the session for testing
+//============================================================
+
+-	script	afkfarm	-1,{
+
+OnInit:
+	// The live server pays 1 point per 15 minutes.
+	.duration = 900;
+	.reward = 1;
+	bindatcmd "afk", strnpcinfo(3) + "::OnAfk", 0, 99;
+	bindatcmd "afkpoints", strnpcinfo(3) + "::OnPoints", 0, 99;
+	bindatcmd "afkdur", strnpcinfo(3) + "::OnDuration", 99, 99;
+	end;
+
+OnPoints:
+	dispbottom "[AFK] You have " + #afk_points + " point(s).";
+	end;
+
+// Test-server lever: a 15-minute bar makes every check a
+// quarter-hour round trip. Not on the live server.
+OnDuration:
+	.@sec = atoi(.@atcmd_parameters$[0]);
+	if (.@sec < 5) {
+		dispbottom "[AFK] usage: @afkdur <seconds>, minimum 5 (now " + .duration + ")";
+		end;
+	}
+	.duration = .@sec;
+	dispbottom "[AFK] session length is now " + .duration + "s.";
+	end;
+
+OnAfk:
+	// Reached only when no bar is up — while one is, is_atcommand()
+	// refuses and this text is shouted at the map instead. So a
+	// session still marked active here is one the player aborted by
+	// moving, and this invocation is the toggle-off.
+	if (@afk_on) {
+		@afk_on = 0;
+		deltimer strnpcinfo(3) + "::OnForfeit";
+		dispbottom "[AFK] AFK cancelled. You have " + #afk_points + " point(s). Type @afk to start again.";
+		end;
+	}
+
+	// `Sitting` is the constant this rathena exposes (doc/script_commands.txt:6641);
+	// there is no ispcsit()/checksit() builtin here.
+	if (!Sitting) {
+		dispbottom "[AFK] Sit down first — you have to stay seated for the whole session.";
+		end;
+	}
+
+	@afk_on = 1;
+	dispbottom "[AFK] AFK started! Stay seated for " + (.duration / 60) + " minutes to earn " + .reward + " point(s). Moving or typing @afk will cancel. You have " + #afk_points + " point(s).";
+
+	// Armed past the bar's own deadline: the client answers
+	// CZ_PROGRESS a beat after the nominal end, and a timer that
+	// fired first would call a paid session a forfeited one.
+	addtimer (.duration + 10) * 1000, strnpcinfo(3) + "::OnForfeit";
+
+	progressbar "0x00B5FF", .duration;
+
+	// Past the bar => it completed. An aborted one never gets here:
+	// answering early sets st->state = CLOSE and this script ENDs.
+	deltimer strnpcinfo(3) + "::OnForfeit";
+	@afk_on = 0;
+	#afk_points += .reward;
+	dispbottom "[AFK] Session complete! Earned " + .reward + " point(s). Total: " + #afk_points + ". Type @afk to start another session.";
+	end;
+
+// The bar was aborted and the script above was terminated with it,
+// so this is the only place the forfeit can be reported.
+OnForfeit:
+	if (!@afk_on)
+		end;
+	@afk_on = 0;
+	dispbottom "[AFK] AFK ended (you moved). No points awarded. Type @afk to try again.";
+	end;
+}
+
+//= Somewhere to spend them. `pointshop` bills the account
+//= variable directly, so no currency item is involved.
+prontera,155,181,4	pointshop	AFK Rewards#afk	4_F_KAFRA1,#afk_points,501:10,502:25,503:50,504:100,505:200
