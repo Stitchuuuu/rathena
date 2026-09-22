@@ -152,3 +152,6 @@ Thumbs.db
 
 # generated files
 generated
+
+# Timestamped map_cache snapshots written by map-dup.mjs before each clone.
+db/map_cache.dat.bak-*

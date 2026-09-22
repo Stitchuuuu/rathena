@@ -1,0 +1,44 @@
+//===== rAthena Script =======================================
+//= @agiup — apply Increase AGI to the caller, for a measurement
+//===== Description: =========================================
+//= The farm character is an Assassin and cannot cast AL_INCAGI, which is an
+//= Acolyte skill. This applies the STATUS directly so an experiment arm can
+//= measure what +25 % movement speed is worth without first solving how a
+//= player would keep the buff up.
+//=
+//= WHY THE STATUS AND NOT THE SKILL. `SC_INCREASEAGI` is where the speed lives:
+//= status.cpp:8149-8150, `val = max(val, 25)`. AL_INCAGI's own Duration1 caps at
+//= 240 s at level 10 (db/pre-re/skill_db.yml Id 29), so a player would need a
+//= town round trip every 4 minutes — which would cost more than the ~+9.7 % the
+//= speed is worth. Measuring the ceiling first is the cheap half of the question.
+//=
+//= Default 10 minutes, or @agiup <seconds> for a whole block.
+//===== Additional Comments: =================================
+//= Written for plans/routefarm-node session 4g. GM 99, like unitpilot.txt.
+//= NOTE: loading this with @reloadscript also reloads every mob spawn, which
+//= re-rolls the map. Never run it during a measurement block.
+//============================================================
+
+-	script	farmbuff	-1,{
+	end;
+
+OnInit:
+	bindatcmd "agiup", strnpcinfo(3) + "::OnAgiUp", 99, 99;
+	bindatcmd "agidown", strnpcinfo(3) + "::OnAgiDown", 99, 99;
+	end;
+
+// @agiup [<seconds>]  — default 600 (10 min)
+OnAgiUp:
+	.@sec = atoi(.@atcmd_parameters$[0]);
+	if (.@sec <= 0) .@sec = 600;
+	sc_start SC_INCREASEAGI, .@sec * 1000, 10;
+	// `message` and not `dispbottom`: dispbottom goes out as ZC_NPC_CHAT, which
+	// the headless client does not collect. See LESSONS.md.
+	message strcharinfo(0), "OK agiup " + .@sec + "s lv10";
+	end;
+
+OnAgiDown:
+	sc_end SC_INCREASEAGI;
+	message strcharinfo(0), "OK agidown";
+	end;
+}
