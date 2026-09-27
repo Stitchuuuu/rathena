@@ -1,0 +1,24 @@
+//===== rAthena Script =======================================
+//= Steal-Farm Healer
+//===== Description: =========================================
+//= Free heal + Blessing 10 / Increase AGI 10 for 10 minutes, on click,
+//= no Zeny, no menu. Written for plans/steal-farm session 3 — see
+//= LOG.md ## 3 for the sustain decision and why this is a standalone
+//= NPC rather than an edit to warper.txt or healer.txt.
+//= The 600000 ms tick mirrors the only 10-minute precedent in this
+//= tree, the captcha/macro-detection reward at src/map/pc.cpp:16087.
+//= AL_BLESSING / AL_INCAGI's own skill_db duration caps at 240000 (4 min).
+//===== Additional Comments: =================================
+//= Test server only. Coordinates are a default next to Warper#prt —
+//= move freely, the bot finds its save point via @save, not this file.
+//============================================================
+
+prontera,155,193,4	script	Steal Farm Healer	909,{
+	specialeffect2 EF_HEAL2;
+	percentheal 100,100;
+	specialeffect2 EF_INCAGILITY;
+	sc_start SC_INCREASEAGI,600000,10;
+	specialeffect2 EF_BLESSING;
+	sc_start SC_BLESSING,600000,10;
+	end;
+}
