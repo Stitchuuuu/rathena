@@ -1,7 +1,7 @@
 //===== rAthena Script =======================================
 //= Steal-Farm Warper
 //===== Description: =========================================
-//= One flat menu to the six maps plans/steal-farm rotates over, so the
+//= One flat menu to the seven maps plans/steal-farm rotates over, so the
 //= headless bot can reach them through routines/lib/warpa.js — which
 //= drives a Warper by MENU TEXT — instead of through @warp, which needs
 //= group 99 and therefore cannot be part of a path a real account walks.
@@ -29,13 +29,14 @@ prontera,157,193,4	script	Steal Farm Warper	811,{
 	mes "[Steal Farm Warper]";
 	mes "Which field?";
 	next;
-	switch (select("prt_fild02:prt_fild02a:prt_fild02b:prt_fild02c:mjolnir_11:moc_pryd05")) {
+	switch (select("prt_fild02:prt_fild02a:prt_fild02b:prt_fild02c:mjolnir_11:moc_pryd05:lhz_dun01")) {
 		case 1: close2; warp "prt_fild02",240,206; end;
 		case 2: close2; warp "prt_fild02a",240,206; end;
 		case 3: close2; warp "prt_fild02b",240,206; end;
 		case 4: close2; warp "prt_fild02c",240,206; end;
 		case 5: close2; warp "mjolnir_11",210,201; end;
 		case 6: close2; warp "moc_pryd05",190,8; end;
+		case 7: close2; warp "lhz_dun01",147,106; end;
 	}
 	end;
 }

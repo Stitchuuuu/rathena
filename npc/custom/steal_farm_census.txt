@@ -1,0 +1,38 @@
+//===== rAthena Script =======================================
+//= Steal-Farm Census
+//===== Description: =========================================
+//= How many players are standing on each steal-farm map, as one line a
+//= headless bot can parse. The farm needs this to be a number and not a
+//= courtesy: map_removemobs only arms when the LAST player leaves, so one
+//= other character on the map costs the farm its whole 300 s respawn
+//= (measured — plans/steal-farm LOG.md ## 1, the reset/resetbusy pair).
+//=
+//= Why a standalone NPC and not a "[N]" suffix on a Warper's menu labels.
+//= quest_warper.txt already does that under its $QW_MapUserShow GM toggle,
+//= so the feature is real — but its menus are towns and dungeons with NO
+//= fields list, and prt_fild02 / mjolnir_11 are fields, so it has no entry
+//= for the route this farm actually runs. And the suffix is hostile to
+//= routines/lib/warpa.js anyway: it picks an entry exact-then-unique-
+//= substring and REFUSES an ambiguous one, so "prt_fild02 [0]" loses the
+//= exact match and becomes a substring of prt_fild02a/b/c's labels too —
+//= four hits, entry-ambiguous, every rotation leg refuses. The warper's own
+//= header already says the exact tier is what keeps those four apart.
+//=
+//= ONE mes line, deliberately. state/npc.js keeps only the latest
+//= SAY_DIALOG's text, so a second mes would overwrite the first and the
+//= reader would see one map instead of seven.
+//===== Additional Comments: =================================
+//= Test server only. The map list is the warper's six plus lhz_dun01.
+//============================================================
+
+prontera,153,193,4	script	Steal Farm Census	909,{
+	mes "CENSUS"
+		+ " prt_fild02=" + getmapusers("prt_fild02")
+		+ " prt_fild02a=" + getmapusers("prt_fild02a")
+		+ " prt_fild02b=" + getmapusers("prt_fild02b")
+		+ " prt_fild02c=" + getmapusers("prt_fild02c")
+		+ " mjolnir_11=" + getmapusers("mjolnir_11")
+		+ " moc_pryd05=" + getmapusers("moc_pryd05")
+		+ " lhz_dun01=" + getmapusers("lhz_dun01");
+	close;
+}
