@@ -17,7 +17,14 @@
 //= substring and refuses an ambiguous one, so they are the raw map names
 //= the routines already use. `prt_fild02` is a substring of
 //= `prt_fild02a`, which is exactly why the exact match outranks the
-//= substring one.
+//= substring one. `moc_pryd03` and `moc_pryd05` are substrings of
+//= nothing here, so both resolve on the exact tier.
+//=
+//= The destination cells are the ones the GAME warps a player to when it
+//= arrives from the floor above, so each is known-walkable and known-sane
+//= rather than picked off a walkmap. It only has to hold for a moment on
+//= the steal routes — the routine's first act on arrival is a random
+//= teleport.
 //===== Additional Comments: =================================
 //= Test server only. The three clones come from
 //= roBrowserLegacy-Node/src/Node/tools/map-dup.mjs — identical cells and
@@ -29,14 +36,15 @@ prontera,157,193,4	script	Steal Farm Warper	811,{
 	mes "[Steal Farm Warper]";
 	mes "Which field?";
 	next;
-	switch (select("prt_fild02:prt_fild02a:prt_fild02b:prt_fild02c:mjolnir_11:moc_pryd05:lhz_dun01")) {
+	switch (select("prt_fild02:prt_fild02a:prt_fild02b:prt_fild02c:mjolnir_11:moc_pryd03:moc_pryd05:lhz_dun01")) {
 		case 1: close2; warp "prt_fild02",240,206; end;
 		case 2: close2; warp "prt_fild02a",240,206; end;
 		case 3: close2; warp "prt_fild02b",240,206; end;
 		case 4: close2; warp "prt_fild02c",240,206; end;
 		case 5: close2; warp "mjolnir_11",210,201; end;
-		case 6: close2; warp "moc_pryd05",190,8; end;
-		case 7: close2; warp "lhz_dun01",147,106; end;
+		case 6: close2; warp "moc_pryd03",100,92; end;
+		case 7: close2; warp "moc_pryd05",190,8; end;
+		case 8: close2; warp "lhz_dun01",147,106; end;
 	}
 	end;
 }
