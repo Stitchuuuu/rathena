@@ -1,0 +1,65 @@
+//===== rAthena Script =======================================
+//= Steal-Farm prod mirror — the two save-point NPCs
+//===== Description: =========================================
+//= Makes the local Hugel save point look like the live server's, so a
+//= headless run can be certified here instead of being believed there.
+//=
+//= The live warper is a quest_warper.txt derivative, so the mirror loads
+//= etc/quest_warper.txt and adds ONE duplicate of its full menu here.
+//= Two things about the stock placements make that necessary:
+//=   - the Hugel one (hugel,90,127) is a TOWN-only variant, and it is 28
+//=     cells from the Cool Event Corp save point (hugel,96,155 — see
+//=     npc/kafras/cool_event_corp.txt), well outside npc_checknear range;
+//=   - every stock placement is sprite 113, while the live one is 811.
+//=
+//= The Healer reproduces the live wording verbatim — a `mes` block, a page
+//= break, then a two-row confirm menu. The stock healer.txt cannot stand in
+//= for it: it puts the price on `message` (self-chat, which never reaches the
+//= dialog stream a client reads) and labels its rows "Heal"/"Cancel".
+//===== Additional Comments: =================================
+//= Test server only, and LOADED ONLY FOR A MIRROR RUN. The routine never
+//= names either NPC — it finds them by sprite + name, exactly as it would on
+//= a server nobody prepared for it. See plans/steal-farm-prod/MIRROR.md for
+//= the flip in both directions; it is @loadnpc / @unloadnpcfile only, never
+//= @reloadscript, which would re-pull every mob spawn on the server.
+//============================================================
+
+// Full towns+dungeons menu, at the live server's name and sprite, standing
+// where the stock Warper#hug did — inside click range of the save point.
+hugel,101,151,4	duplicate(Warpra#0)	Warpa Town	811
+
+//============================================================
+// The priced Healer. Wording is the live server's, to the comma.
+//============================================================
+hugel,89,150,6	script	Healer	909,{
+
+	.@Price = 6750;	// Zeny required for heal — the live figure
+	.@Buffs = 1;	// Also buff players? (1: yes / 0: no)
+
+	if (.@Price) {
+		mes "[Healer]";
+		mes "Healing and buffs will cost you:";
+		mes "^FF0000" + callfunc("F_InsertComma",.@Price) + " Zeny^000000";
+		mes " ";
+		mes "Would you like to proceed?";
+		next;
+		if (select("Yes, heal me:No thanks") == 2)
+			close;
+		if (Zeny < .@Price) {
+			mes "[Healer]";
+			mes "You cannot afford it.";
+			close;
+		}
+		Zeny -= .@Price;
+		close2;
+	}
+	specialeffect2 EF_HEAL2;
+	percentheal 100,100;
+	if (.@Buffs) {
+		specialeffect2 EF_INCAGILITY;
+		sc_start SC_INCREASEAGI,600000,10;
+		specialeffect2 EF_BLESSING;
+		sc_start SC_BLESSING,600000,10;
+	}
+	end;
+}
