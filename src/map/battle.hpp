@@ -762,6 +762,7 @@ struct Battle_Config
 
 	int32 mob_respawn_time;
 	int32 mob_unlock_time;
+	int32 mob_journal_id;
 	int32 map_edge_size;
 	int32 randomize_center_cell;
 

@@ -2359,8 +2359,18 @@ int32 unit_skilluse_id2(block_list *src, int32 target_id, uint16 skill_id, uint1
 		} else if( src->type == BL_MER && skill_id == MA_REMOVETRAP ) {
 			if( !battle_check_range(battle_get_master(src), target, range + 1) )
 				return 0; // Aegis calc remove trap based on Master position, ignoring mercenary O.O
-		} else if( !battle_check_range(src, target, range) )
+		} else if( !battle_check_range(src, target, range) ) {
+			// THE SILENT REFUSAL, and it is the reason this record exists. This path
+			// returns 0 without clif_skill_fail, so the client gets no packet at all:
+			// no ZC_ACK_TOUSESKILL, no failure code, nothing to distinguish "the wall
+			// ate my cast" from "the monster ignored me". Reconstructing it from the
+			// outside is guesswork; here it is the decision itself.
+			if (target->type == BL_MOB && mob_journal_on(reinterpret_cast<mob_data*>(target)))
+				mob_journal(reinterpret_cast<mob_data*>(target), "cast_refused",
+					"\"by\":%d,\"skill\":%d,\"lv\":%d,\"range\":%d,\"dist\":%d,\"sx\":%d,\"sy\":%d,\"why\":\"battle_check_range\"",
+					src->id, skill_id, skill_lv, range, distance_bl(src, target), src->x, src->y);
 			return 0; // Arrow-path check failed.
+		}
 	}
 
 	if (!combo) // Stop attack on non-combo skills [Skotlex]

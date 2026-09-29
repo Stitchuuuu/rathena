@@ -1,0 +1,233 @@
+//===== rAthena Script =======================================
+//= Sim Pilot — build an exact CHARACTER from a test rig
+//===== Description: ========================================
+//= The character-side counterpart of unitpilot.txt. That one
+//= stages the world; this one stages the subject: job, levels,
+//= stats, the exact skill set, and items at an exact refine.
+//=
+//= WHY THIS EXISTS. A survivability measurement is only worth
+//= the fidelity of the character it ran on, and a headless
+//= client cannot build one. It has no char-create path, @item
+//= always hands over refine 0, and the stock @commands that
+//= raise a stat ADD to it — so "VIT 91" out of an unknown
+//= starting value is not reproducible. Every command here
+//= exists to make one line of a character sheet settable to an
+//= ABSOLUTE value, so two runs a week apart compare.
+//=
+//= The one thing no @command can produce at all is a RANKED
+//= alchemist potion. The +50% of pc_itemheal's potion_flag == 2
+//= is gated on card[0] == CARD0_CREATE plus a maker char_id
+//= that pc_famerank finds in the fame top 10 — an ITEM
+//= property, not a character one, and @item cannot write card
+//= slots. `@simgive <itid> <n> <refine> 1` stamps it.
+//=
+//= DELIBERATELY GENERIC. Nothing here knows about any class,
+//= build or loadout. WHICH skills and WHICH gear a scenario
+//= wants live in the scenario, so a new build is a new caller
+//= and never an edit here.
+//=
+//===== Output contract: ====================================
+//= Same as unitpilot.txt, and for the same reason: `message`
+//= (ZC_NOTIFY_PLAYERCHAT, what every @command answers on) and
+//= never `dispbottom` (ZC_NPC_CHAT, which a test rig watching
+//= for command replies never sees). Exactly one reply per
+//= command, failures prefixed ERR, so a caller branches on the
+//= prefix instead of waiting out a timeout.
+//=
+//=   OK <verb> <detail>
+//=   ERR <verb> <reason>
+//=
+//===== Commands: ===========================================
+//= @simwipe                       destroy every worn + held item
+//= @simsetup <job> <baseLv> <jobLv> <str> <agi> <vit> <int> <dex> <luk>
+//=                                absolute character sheet
+//= @simskill <skill> <lv>         grant one skill (lv 0 removes)
+//= @simgive <itid> <n> <refine> [ranked] [card]
+//=                                items, refine and card exact
+//=
+//= Absolute rather than additive is the whole point: it is the
+//= difference between a rerun and a drift.
+//===== Additional Comments: ================================
+//= GM level 99 by default — it rewrites a character outright
+//= and destroys its inventory, so it belongs on a test server
+//= and nowhere else.
+//===========================================================
+
+-	script	simpilot	-1,{
+
+OnInit:
+	bindatcmd "simwipe", strnpcinfo(3) + "::OnWipe", 99, 99;
+	bindatcmd "simsetup", strnpcinfo(3) + "::OnSetup", 99, 99;
+	bindatcmd "simskill", strnpcinfo(3) + "::OnSkill", 99, 99;
+	bindatcmd "simgive", strnpcinfo(3) + "::OnGive", 99, 99;
+	end;
+
+// @simwipe
+// Empty hands and an empty bag, so the next @simgive sequence IS the whole
+// loadout rather than a layer over whatever the last run left behind.
+//
+// `nude` first is not optional: @storeall and any by-slot delete skip what is
+// worn, so without it the previous run's armour stays on and the refine under
+// test is not the one being measured.
+//
+// DESTROYS rather than stores. @storeall would be gentler and is wrong here:
+// a loop that re-runs this every arm would push a run's worth of farmed loot
+// into storage every time and silently fill it, at which point the wipe starts
+// failing instead of the run.
+OnWipe:
+	nude;
+	getinventorylist;
+	.@n = @inventorylist_count;
+	// Downwards: delitemidx renumbers nothing, but reading the snapshot forwards
+	// while deleting is the kind of thing that works until a stack merges.
+	freeloop(1);
+	for (.@i = .@n - 1; .@i >= 0; .@i--)
+		delitemidx @inventorylist_idx[.@i], @inventorylist_amount[.@i];
+	freeloop(0);
+	getinventorylist;
+	message strcharinfo(0), "OK simwipe removed " + .@n + " slot(s), " + @inventorylist_count + " left, wt " + readparam(Weight);
+	end;
+
+// @simsetup <job> <baseLv> <jobLv> <str> <agi> <vit> <int> <dex> <luk>
+//
+// The six stats are BASE values, set absolutely. rAthena exports no settable
+// `Vit` parameter — only the `bVit` constant — so this reads the current value
+// and hands pc_statusup2 the delta. pc_statusup2 pc_setstat's the result in
+// without charging status points, so a sheet is reproduced as STATED and not as
+// afforded; what that costs is that the sheet need not be a legal allocation
+// for the level, which is the caller's business to know.
+//
+// Job bonuses are NOT part of these numbers: status_calc_pc adds job_stats.yml
+// on top of base, so the effective totals are higher. MaxHp / MaxSp / MaxWeight
+// are echoed back because they are computed FROM the effective stats — they are
+// the caller's only server-side witness that the sheet landed.
+OnSetup:
+	if (.@atcmd_numparameters < 9) {
+		message strcharinfo(0), "ERR simsetup usage: @simsetup <job> <baseLv> <jobLv> <str> <agi> <vit> <int> <dex> <luk>";
+		end;
+	}
+	.@job = atoi(.@atcmd_parameters$[0]);
+
+	// resetskill BEFORE anything is granted: jobchange runs pc_calc_skilltree,
+	// which clears every skill outside the new job's tree anyway, and the reset
+	// keeps the old job's skill points from surviving as a silent surplus.
+	jobchange .@job;
+	resetskill;
+
+	set BaseLevel, atoi(.@atcmd_parameters$[1]);
+	set JobLevel, atoi(.@atcmd_parameters$[2]);
+	statusup2 bStr, atoi(.@atcmd_parameters$[3]) - readparam(bStr);
+	statusup2 bAgi, atoi(.@atcmd_parameters$[4]) - readparam(bAgi);
+	statusup2 bVit, atoi(.@atcmd_parameters$[5]) - readparam(bVit);
+	statusup2 bInt, atoi(.@atcmd_parameters$[6]) - readparam(bInt);
+	statusup2 bDex, atoi(.@atcmd_parameters$[7]) - readparam(bDex);
+	statusup2 bLuk, atoi(.@atcmd_parameters$[8]) - readparam(bLuk);
+
+	// Read back, never echo the request: set BaseLevel caps at pc_maxbaselv and
+	// pc_statusup2 caps at max_parameter, and a clamped sheet reported as asked
+	// for is exactly the kind of thing a measurement later blames on the code
+	// under test.
+	message strcharinfo(0), "OK simsetup " + .@job + " " + jobname(.@job)
+		+ " lv " + readparam(BaseLevel) + "/" + readparam(JobLevel)
+		+ " base " + readparam(bStr) + "/" + readparam(bAgi) + "/" + readparam(bVit)
+		+ "/" + readparam(bInt) + "/" + readparam(bDex) + "/" + readparam(bLuk)
+		+ " maxhp " + readparam(MaxHp) + " maxsp " + readparam(MaxSp)
+		+ " maxwt " + readparam(MaxWeight);
+	end;
+
+// @simskill <skill id|name> <lv>
+//
+// ADDSKILL_PERMANENT (flag 0), so the grant is the same kind of thing a learned
+// skill is and survives the pc_calc_skilltree that runs on every relog. That
+// also means the skill TREE applies: a skill whose prerequisites are not held is
+// cleared again on the next recalc, SILENTLY. Grant the chain, lowest first.
+//
+// Numeric ids and constant names both work — `skill` and `getskilllv` both take
+// rAthena's `v` argument — so a caller passes whichever it already has.
+OnSkill:
+	if (.@atcmd_numparameters < 2) { message strcharinfo(0), "ERR simskill usage: @simskill <skill> <lv>"; end; }
+	.@lv = atoi(.@atcmd_parameters$[1]);
+	.@sk = atoi(.@atcmd_parameters$[0]);
+	if (.@sk > 0) {
+		skill .@sk, .@lv, 0;
+		.@got = getskilllv(.@sk);
+	} else {
+		skill .@atcmd_parameters$[0], .@lv, 0;
+		.@got = getskilllv(.@atcmd_parameters$[0]);
+	}
+	// Read back: pc_skill caps at the skill's MaxLevel, so a caller that asked
+	// for lv 10 of a lv-5 skill hears 5 rather than assuming 10.
+	message strcharinfo(0), "OK simskill " + .@atcmd_parameters$[0] + " lv " + .@got;
+	end;
+
+// @simgive <itid> <amount> <refine> [ranked] [card id]
+//
+// `card` compounds a card into slot 1 of the item as it is created. It writes
+// card[0] directly and therefore BYPASSES pc_insert_card, which is the only
+// validation rAthena has: that function refuses a card whose own equip mask does
+// not intersect the target's (`(item_eq->equip & item_card->equip) == 0`,
+// pc.cpp:5628), and refuses a target with no free slot at all. Neither check runs
+// here, so this can mint an item the game cannot produce — a shield card sitting
+// in a body armour, or a card in a slotless Chain Mail (2314 has 0 slots; 2315 is
+// the [1]). status_calc_pc runs the card's script regardless of where it sits, so
+// the sim would happily measure a build that does not exist.
+//
+// The caller owns that check. It is left here rather than enforced because this
+// command has no business knowing what a scenario is trying to ask.
+//
+// `ranked` stamps the item as brewed by a famous alchemist — card[0] =
+// CARD0_CREATE (0x00FE = 254) plus the maker's char_id split across
+// card[2]/card[3], exactly what skill.cpp writes when AM_PHARMACY produces one.
+// pc_useitem then finds it with pc_famerank and sets potion_flag = 2, which
+// multiplies the WHOLE of pc_itemheal's bonus (100 + 2*VIT + …) by 1.5 — not the
+// base heal by 1.5, and the difference is large enough to change a conclusion.
+//
+// The maker is READ from the database, with the same query char-server's own
+// char_read_fame_list uses: fame > 0 and an alchemist class, highest fame first.
+// A hardcoded char_id would keep working after that character was renamed,
+// rebirthed out of the class or dropped off the list, and would then produce
+// potions that LOOK ranked and heal as if they were not — the one failure mode
+// here a measurement cannot see.
+//
+// ⚠ The map server holds its fame list in memory from the last
+// chrif_buildfamelist. If fame was edited in SQL since the char server booted,
+// this query and pc_famerank disagree: bounce the stack, or verify the heal
+// empirically against 1.5x.
+OnGive:
+	if (.@atcmd_numparameters < 3) { message strcharinfo(0), "ERR simgive usage: @simgive <itid> <amount> <refine> [ranked] [card]"; end; }
+	.@itid = atoi(.@atcmd_parameters$[0]);
+	.@amt = atoi(.@atcmd_parameters$[1]);
+	.@refine = atoi(.@atcmd_parameters$[2]);
+	.@ranked = (.@atcmd_numparameters > 3) ? atoi(.@atcmd_parameters$[3]) : 0;
+	.@card = (.@atcmd_numparameters > 4) ? atoi(.@atcmd_parameters$[4]) : 0;
+	if (getiteminfo(.@itid, ITEMINFO_TYPE) < 0) { message strcharinfo(0), "ERR simgive no item " + .@itid; end; }
+	if (.@amt < 1) { message strcharinfo(0), "ERR simgive amount " + .@amt; end; }
+	if (.@card && getiteminfo(.@card, ITEMINFO_TYPE) < 0) { message strcharinfo(0), "ERR simgive no card " + .@card; end; }
+	// card[0] is the one slot both features want, so they cannot both have it: a
+	// ranked potion IS a card[0] = CARD0_CREATE stamp. Refused rather than silently
+	// preferring one, because the loser would look like it had been applied.
+	if (.@card && .@ranked) { message strcharinfo(0), "ERR simgive ranked and card both claim card[0]"; end; }
+
+	.@maker$ = "-";
+	if (.@card) {
+		getitem2 .@itid, .@amt, 1, .@refine, 0, .@card, 0, 0, 0;
+		.@maker$ = "card:" + .@card;
+	} else if (.@ranked) {
+		query_sql("SELECT `char_id`,`name` FROM `char` WHERE `fame`>0 AND `class` IN ("
+			+ JOB_ALCHEMIST + "," + JOB_CREATOR + "," + JOB_BABY_ALCHEMIST + "," + JOB_GENETIC
+			+ ") ORDER BY `fame` DESC LIMIT 1", .@cid, .@cname$);
+		if (!.@cid) { message strcharinfo(0), "ERR simgive no famous alchemist in the database"; end; }
+		.@maker$ = .@cid + ":" + .@cname$;
+		getitem2 .@itid, .@amt, 1, .@refine, 0, 254, 0, .@cid & 0xFFFF, (.@cid >> 16) & 0xFFFF;
+	} else {
+		getitem2 .@itid, .@amt, 1, .@refine, 0, 0, 0, 0, 0;
+	}
+
+	// countitem, never the amount asked for: pc_additem refuses on weight or on a
+	// full bag and getitem2 carries on regardless, so "how many do I actually
+	// hold" is the only answer a refill loop can act on.
+	message strcharinfo(0), "OK simgive " + .@itid + " +" + .@refine
+		+ " maker " + .@maker$ + " have " + countitem(.@itid)
+		+ " wt " + readparam(Weight) + "/" + readparam(MaxWeight);
+	end;
+}

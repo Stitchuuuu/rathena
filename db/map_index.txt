@@ -1330,6 +1330,9 @@ yggdrasil0c
 ayo_dun02a
 ayo_dun02b
 ayo_dun02c
+treasure01a
+treasure01b
+treasure01c
 prt_fild02a
 prt_fild02b
 prt_fild02c

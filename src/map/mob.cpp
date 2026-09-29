@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdarg>
 #include <cstdlib>
 #include <map>
 #include <unordered_map>
@@ -1624,9 +1625,23 @@ static int32 mob_ai_sub_hard_slavemob(mob_data *md,t_tick tick)
  * when trying to pick new targets when the current chosen target is
  * unreachable.
  *------------------------------------------*/
-int32 mob_unlocktarget(mob_data *md, t_tick tick)
+int32 mob_unlocktarget_at(mob_data *md, t_tick tick, const char *file, int32 line)
 {
 	nullpo_ret(md);
+
+	// Emitted BEFORE the switch, while the old state and the target are still here:
+	// the body clears target_id and drops to MSS_IDLE, so a record taken afterwards
+	// would say "idle, no target" for every unlock and name nothing. `file`/`line`
+	// are the caller's, via the macro in mob.hpp — they are the reason.
+	// Gated on actually HOLDING a target: mob_unlocktarget is also the tail of a
+	// finished random walk, which calls it every few cells with target_id already 0.
+	// Measured on a 14 s capture, that path alone was 105 of 109 records — an unlock
+	// that drops nothing is not an unlock, and logging it buries the ones that are.
+	if (md->target_id != 0 && mob_journal_on(md)) {
+		const char *base = strrchr(file, '/');
+		mob_journal(md, "unlock", "\"from\":\"%s:%d\",\"lost_target\":%d",
+			base != nullptr ? base + 1 : file, line, md->target_id);
+	}
 
 	switch (md->state.skillstate) {
 	case MSS_WALK:
@@ -1812,12 +1827,92 @@ int32 mob_warpchase(mob_data *md, block_list *target)
 	return 0;
 }
 
+/// Human names for MobSkillState, indexed from MSS_IDLE. MSS_ANY is -1 and is
+/// never a mob's actual state, so the table starts at 0 and the accessor clamps.
+static const char* mob_journal_states[] = {
+	"IDLE", "WALK", "LOOT", "DEAD", "BERSERK", "ANGRY", "RUSH", "FOLLOW", "ANYTARGET"
+};
+
+const char* mob_statename(int32 state) {
+	if (state < 0 || state >= (int32)ARRAYLENGTH(mob_journal_states))
+		return "?";
+	return mob_journal_states[state];
+}
+
+/**
+ * The AI journal — one JSON object per line in log/mob-journal.log, for the single
+ * mob id named by battle_config.mob_journal_id.
+ *
+ * WHY THIS EXISTS. Everything a monster's AI decides is invisible from outside:
+ * the client sees a teleport, not the unlock that made it legal, and it cannot tell
+ * an idle `always` roll from a rudeattacked one because both leave as the same cast.
+ * Reconstructing the cause from packets is inference; this is the decision itself,
+ * written where it is taken.
+ *
+ * Disabled by default and free when disabled: every call site is guarded by
+ * mob_journal_on(), a single integer compare against the mob's id, so an untouched
+ * server pays one predictable branch per AI decision and opens no file.
+ *
+ * The file is opened lazily and kept open — an AI tick is not a place to pay an
+ * fopen — and flushed per line, because the interesting runs are the ones that end
+ * in a crash or a kill -9 and a buffered tail is exactly the part that matters.
+ *
+ * @param md the monster (its id, cell and current state are stamped on every record)
+ * @param ev short event key: "state", "unlock", "rude", "vis", "skill", "lock"
+ * @param fmt printf-style JSON fragment appended inside the object, or nullptr
+ */
+static FILE* mob_journal_fp = nullptr;
+
+bool mob_journal_on(const mob_data* md) {
+	return battle_config.mob_journal_id != 0 && md != nullptr && md->mob_id == battle_config.mob_journal_id;
+}
+
+void mob_journal(const mob_data* md, const char* ev, const char* fmt, ...) {
+	if (!mob_journal_on(md))
+		return;
+
+	if (mob_journal_fp == nullptr) {
+		mob_journal_fp = fopen("log/mob-journal.log", "a");
+		if (mob_journal_fp == nullptr) {
+			ShowError("mob_journal: cannot open log/mob-journal.log — journal disabled\n");
+			battle_config.mob_journal_id = 0;
+			return;
+		}
+	}
+
+	// gettick() rather than wall clock: every other number in these records is a
+	// tick, and a reader correlating "unlock at T, teleport at T+1400" needs the two
+	// stamps to share one clock.
+	fprintf(mob_journal_fp,
+		"{\"tick\":%u,\"gid\":%d,\"mob\":%d,\"ev\":\"%s\",\"x\":%d,\"y\":%d,\"state\":\"%s\",\"target\":%d,\"attacked_count\":%d",
+		(uint32)gettick(), md->id, md->mob_id, ev, md->x, md->y,
+		mob_statename(md->state.skillstate), md->target_id, md->state.attacked_count);
+
+	if (fmt != nullptr) {
+		va_list ap;
+		va_start(ap, fmt);
+		fputc(',', mob_journal_fp);
+		vfprintf(mob_journal_fp, fmt, ap);
+		va_end(ap);
+	}
+
+	fputs("}\n", mob_journal_fp);
+	fflush(mob_journal_fp);
+}
+
 /**
  * Sets a mob's state considering the aggressive bit
  * @param md: Mob to set state on
  * @param skillstate: Target state of the monster
  */
 void mob_setstate(mob_data& md, MobSkillState skillstate) {
+	// Captured before the switch: the journal's own header stamps the CURRENT state,
+	// which is the old one here, and a transition record that does not name both ends
+	// is unreadable. `asked` is kept separate from the result because mob_setstate
+	// rewrites BERSERK/RUSH into ANGRY/FOLLOW for aggressive mobs, and knowing what
+	// the caller wanted is half of why a state came out the way it did.
+	const MobSkillState was = md.state.skillstate;
+
 	switch (skillstate) {
 		case MSS_BERSERK:
 		case MSS_ANGRY:
@@ -1833,6 +1928,13 @@ void mob_setstate(mob_data& md, MobSkillState skillstate) {
 			md.state.skillstate = skillstate;
 			break;
 	}
+
+	// Only transitions, not every call: mob_setstate is invoked with the state a mob
+	// is already in on most ticks, and logging those would bury the handful that
+	// matter under thousands of no-ops.
+	if (was != md.state.skillstate)
+		mob_journal(&md, "state", "\"from\":\"%s\",\"to\":\"%s\",\"asked\":\"%s\",\"aggressive\":%d",
+			mob_statename(was), mob_statename(md.state.skillstate), mob_statename(skillstate), md.state.aggressive);
 }
 
 /*==========================================
@@ -1925,7 +2027,15 @@ static bool mob_ai_sub_hard(mob_data *md, t_tick tick)
 			// But don't do this if they stopped because target is already in attack range
 			if (!battle_check_range(md, tbl, md->status.rhw.range)) {
 				// If target is no longer visible, target is dropped and the monster waits for next iteration to continue
-				if (!status_check_visibility(md, tbl, true)) {
+				bool visible = status_check_visibility(md, tbl, true);
+				// Recorded whichever way it went: a chase that SURVIVED this check dates
+				// the last moment the lock was known good, which is exactly what a reader
+				// needs to bracket an idle window. The distance is Chebyshev against
+				// range3 (check_distance_bl, CIRCULAR_AREA off) and it is the number that
+				// decides — logging it shows the margin, not just the verdict.
+				mob_journal(md, "vis", "\"visible\":%s,\"dist\":%d,\"range3\":%d,\"tx\":%d,\"ty\":%d",
+					visible ? "true" : "false", distance_bl(md, tbl), md->db->range3, tbl->x, tbl->y);
+				if (!visible) {
 					mob_unlocktarget(md, tick);
 					return true;
 				}
@@ -1938,6 +2048,23 @@ static bool mob_ai_sub_hard(mob_data *md, t_tick tick)
 	{
 		if( md->attacked_id == md->target_id )
 		{	//Rude attacked check.
+			// The two halves of the rude condition, evaluated once each for the record
+			// rather than re-derived by a reader from a client-side port of them. This
+			// is the branch that decides whether a hit ARMS the rudeattacked teleport
+			// row, and it is invisible from outside: the counter lives here, the reset
+			// happens inside mobskill_use, and nothing about either reaches the wire.
+			// Note the counter is only incremented when BOTH halves already hold, so
+			// `attacked_count` in the header of this record is still the pre-increment
+			// value — `would_be` says what it is about to become.
+			if (mob_journal_on(md)) {
+				bool in_reach = battle_check_range(md, tbl, md->status.rhw.range);
+				bool can_path = mob_can_reach(md, tbl, md->db->range3);
+				mob_journal(md, "rude", "\"in_atk_range\":%s,\"can_reach\":%s,\"dist\":%d,\"range3\":%d,\"would_be\":%d,\"threshold\":%d,\"fires\":%s",
+					in_reach ? "true" : "false", can_path ? "true" : "false",
+					distance_bl(md, tbl), md->db->range3,
+					md->state.attacked_count + 1, RUDE_ATTACKED_COUNT,
+					(!in_reach && !can_path && md->state.attacked_count + 1 > RUDE_ATTACKED_COUNT) ? "true" : "false");
+			}
 			if( !battle_check_range(md, tbl, md->status.rhw.range)
 			&&  ( //Can't attack back and can't reach back.
 					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.getSCE(SC_SPIDERWEB)
@@ -4321,11 +4448,20 @@ bool mobskill_use(mob_data *md, t_tick tick, int32 event, int64 damage)
 				(ms[i]->state == MSS_ANYTARGET && md->target_id && md->state.skillstate != MSS_LOOT)
 			)) //ANYTARGET works with any state as long as there's a target. [Skotlex]
 				;
-			else
+			else {
+				// The most valuable rejection of the lot: it is the one that makes an
+				// `idle`-only row unreachable while a monster is chasing, which is the
+				// entire mechanism behind "keep it locked and it cannot leave".
+				mob_journal(md, "skill", "\"skill\":%d,\"row_state\":\"%s\",\"event\":%d,\"fired\":false,\"why\":\"state\"",
+					ms[i]->skill_id, mob_statename(ms[i]->state), event);
 				continue;
+			}
 		}
-		if (rnd() % 10000 > ms[i]->permillage) //Lupus (max value = 10000)
+		if (rnd() % 10000 > ms[i]->permillage) { //Lupus (max value = 10000)
+			mob_journal(md, "skill", "\"skill\":%d,\"row_state\":\"%s\",\"event\":%d,\"permillage\":%d,\"fired\":false,\"why\":\"roll\"",
+				ms[i]->skill_id, mob_statename(ms[i]->state), event, ms[i]->permillage);
 			continue;
+		}
 
 		if (ms[i]->cond1 == event)
 			flag = 1; //Trigger skill.
@@ -4393,9 +4529,19 @@ bool mobskill_use(mob_data *md, t_tick tick, int32 event, int64 damage)
 			}
 		}
 
+		// Every row that got as far as its condition, and the verdict on it. Rows
+		// rejected earlier (wrong state, still on cooldown, lost the permillage roll)
+		// are reported at their own `continue` above — the three are different facts
+		// and collapsing them would hide the one that matters. `event` is -1 for the
+		// once-per-second idle sweep and an MSC_* for a triggered check, which is what
+		// separates "she rolled it while idle" from "our hit summoned it".
+		mob_journal(md, "skill", "\"skill\":%d,\"lv\":%d,\"row_state\":\"%s\",\"cond\":%d,\"event\":%d,\"permillage\":%d,\"fired\":%s",
+			ms[i]->skill_id, ms[i]->skill_lv, mob_statename(ms[i]->state), ms[i]->cond1, event, ms[i]->permillage,
+			flag ? "true" : "false");
+
 		if (!flag)
 			continue; //Skill requisite failed to be fulfilled.
-		
+
 		FreeBlockLock freeLock;
 		//Execute skill
 		if (skill_get_casttype(ms[i]->skill_id) == CAST_GROUND)

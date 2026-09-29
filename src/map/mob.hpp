@@ -530,7 +530,19 @@ TIMER_FUNC(mob_attacked);
 TIMER_FUNC(mob_norm_attacked);
 int32 mob_target(mob_data *md,block_list *bl,int32 dist);
 bool mob_randomtarget(mob_data& md, int32& target_id);
-int32 mob_unlocktarget(mob_data *md, t_tick tick);
+// Dropping a target is the single most consequential thing a mob AI does — it is
+// what makes every `idle` skill row legal, teleports included — and there are
+// fourteen places that do it across seven files. The macro carries the call site
+// into the journal so a record says WHICH rule fired, not merely that one did.
+// Callers keep writing mob_unlocktarget(md, tick) and need no changes.
+// The AI journal (battle_config.mob_journal_id). `mob_journal_on` is the cheap
+// guard callers outside mob.cpp use before building any argument.
+bool mob_journal_on(const mob_data* md);
+void mob_journal(const mob_data* md, const char* ev, const char* fmt, ...);
+const char* mob_statename(int32 state);
+
+int32 mob_unlocktarget_at(mob_data *md, t_tick tick, const char *file, int32 line);
+#define mob_unlocktarget(md, tick) mob_unlocktarget_at((md), (tick), __FILE__, __LINE__)
 mob_data* mob_spawn_dataset(struct spawn_data *data);
 int32 mob_spawn(mob_data *md);
 TIMER_FUNC(mob_delayspawn);
