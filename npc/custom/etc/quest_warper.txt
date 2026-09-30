@@ -87,14 +87,15 @@ function	script	Q_Warpra	{
 		debugmes "Please check your special warp menu settings on the Warpra.";
 		end;
 	case 3: goto L_town;
-	case 4: goto L_dungeon;
-	case 5: goto L_FewWarps;
-	case 6: goto L_NoUnlock;
-	case 7: goto L_heal_Full;
-	case 8: goto L_heal_Part;
-	case 9: goto L_Storage;
-	case 10: goto L_GStorage;
-	case 11:
+	case 4: goto L_fields;
+	case 5: goto L_dungeon;
+	case 6: goto L_FewWarps;
+	case 7: goto L_NoUnlock;
+	case 8: goto L_heal_Full;
+	case 9: goto L_heal_Part;
+	case 10: goto L_Storage;
+	case 11: goto L_GStorage;
+	case 12:
 	default:
 		goto L_end;
 	}
@@ -332,6 +333,55 @@ L_town:
 	set Zeny, Zeny+@pTprice[@Tmenuref[@TWMenu-1]];
 	end;
 
+//===========================Fields================================
+// Region -> field, three menus deep like the dungeons and for the same reason:
+// the live server draws "Warp to Fields" -> "Prontera Fields [N]" ->
+// "Prontera Field 2 [0]", and a farm routine picks those labels by name.
+//
+// 🔴 The leaf keeps the REGION's name ("Prontera Field 2"), not the dungeons'
+// house "Level N" convention. There is exactly one spelling for it upstream and
+// this is it.
+//
+// Deliberately NOT built on QWS_Make_Dungeon_Menu: that one gates every region
+// behind a ##QWS_D_Unlock bit, and fields are somewhere you walk to rather than
+// somewhere you unlock. Flat price, no depth fee, which is what the live menu
+// shows.
+
+L_fields:
+	callfunc "QWS_Farray";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<35; set .@i,.@i+1)	// Expected maximum is 35
+		set .@menu$,.@menu$+@Fmenulist$[.@i]+":";
+	freeloop(0);
+	set @FWMenu,select(.@menu$);
+
+	if (@Fmenuref[@FWMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+	set @FwarpMenu, (@Fmenuref[@FWMenu-1]);
+	callfunc "QWS_FLarray";
+
+	next;
+	mes "[Warpra]";
+	mes "Please select where you want to go:";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<18; set .@i,.@i+1)	// Expected maximum is 18
+		set .@menu$,.@menu$+@FWLmenulist$[.@i]+":";
+	freeloop(0);
+	set @FWLMenu,select(.@menu$);
+
+	if (@FWLmenuref[@FWLMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+
+	set @Farrayref, @FWLmenuref[@FWLMenu-1];
+	set @fwarpprice, @pFprice[@FwarpMenu];
+
+	if(Zeny<@fwarpprice) callsub L_Short_on_zeny,5;
+	set Zeny, Zeny-(@fwarpprice);
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@fwarpprice/16);
+	warp @FGat$[@Farrayref],@FXcoords[@Farrayref],@FYcoords[@Farrayref];
+	close2;
+	end;
+
 //=========================Dungeons================================
 
 L_dungeon:
@@ -535,6 +585,7 @@ L_Short_on_zeny:
 	case 2: mes "You don't seem to have "+@fee+" zeny to pay the storage fee."; break;
 	case 3: mes "You don't seem to have "+$QW_GS_PRICE+" zeny to pay the guild storage fee."; break;
 	case 4: mes "You don't seem to have "+@healfee+" zeny to pay for your healing."; break;
+	case 5: mes "You don't seem to have "+@fwarpprice+" zeny to pay for the warp to "+@FLevelName$[@FWLmenuref[@FWLMenu-1]]+"."; break;
 	}
 	close;
 	end;
@@ -590,7 +641,11 @@ function	script	QWS_DungeonStamps	{
 function	script	QWS_MMarray	{
 
 	// Currently 9 items
-	setarray @pMmenuitems$[0], "GameMaster Menu", $QW_SP_Warpname$, "Warp to Towns", "Warp to Dungeons", "Why so few warps?", "Why don't you unlock this location?", "Heal", "Heal", "Storage", "Guild Storage", "Cancel";
+	// "Warp to Fields" sits between Towns and Dungeons because that is where the
+	// live server draws it. 🔴 Both the switch in Q_Warpra and the @Mi counter
+	// below are POSITIONAL on this array — inserting here shifts every case after
+	// case 3.
+	setarray @pMmenuitems$[0], "GameMaster Menu", $QW_SP_Warpname$, "Warp to Towns", "Warp to Fields", "Warp to Dungeons", "Why so few warps?", "Why don't you unlock this location?", "Heal", "Heal", "Storage", "Guild Storage", "Cancel";
 	set @Mi,0; // loop counter
 	set @Mj,0; // menu line counter
 
@@ -612,6 +667,13 @@ function	script	QWS_MMarray	{
 	set @Mi,@Mi+1;
 //----------------Town-Warp
 	if ($QW_TW_OFF == 0) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Field-Warp
+	if ($QW_FW_OFF == 0) {
 		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
 		set @Mmenuref[@Mj],@Mi;
 		set @Mj,@Mj+1;
@@ -1521,6 +1583,113 @@ function	script	QWS_DLarray	{
 	} while (@DWi < @DLevels[@DwarpMenu]);
 	set @DWLmenulist$[@DWj], "Exit";
 	set @DWLmenuref[@DWj],57005; // 57005='dead' in hex
+	return;
+}
+
+//=====================Field=Region=Array==========================
+// One region per block. @FLocRef[] points at where the region's fields start
+// in the flat @FGat$ / @FLevelName$ / @FXcoords / @FYcoords arrays, exactly the
+// way @DLocRef does for dungeons.
+//
+// Adding a region:
+//	setarray @pFmenuitems$[@Fi], "Payon Forests";		// Name shown in the region menu
+//	setarray @pFprice[@Fi], $QW_FW_PRICE;			// Flat — fields have no depth
+//	setarray @FCount[@Fi], 10;				// Number of fields in the region
+//
+//	setarray @FGat$[@Fref], "pay_fild01", ...;		// Map names
+//	setarray @FLevelName$[@Fref], "Payon Forest 1", ...;	// 🔴 the region's own name, NOT "Level N"
+//	setarray @FXcoords[@Fref], 155, ...;			// X warp coords
+//	setarray @FYcoords[@Fref], 205, ...;			// Y warp coords
+//
+//	QWS_Make_Field_Menu;
+//
+// Coordinates are the ones npc/custom/warper.txt warps to.
+
+function	script	QWS_Farray	{
+	function QWS_Make_Field_Menu;
+
+	set @Fi,0;   // region counter
+	set @Fj,0;   // menu line counter
+	set @Fref,0; // running index into the flat field arrays
+	cleararray @Fmenulist$[0],"",35;
+
+//----------------PRONTERA FIELDS
+	setarray @pFmenuitems$[@Fi], "Prontera Fields";
+	setarray @pFprice[@Fi], $QW_FW_PRICE;
+	setarray @FCount[@Fi], 12;
+
+	setarray @FGat$[@Fref], "prt_fild00", "prt_fild01", "prt_fild02", "prt_fild03", "prt_fild04", "prt_fild05", "prt_fild06", "prt_fild07", "prt_fild08", "prt_fild09", "prt_fild10", "prt_fild11";
+	setarray @FLevelName$[@Fref], "Prontera Field 0", "Prontera Field 1", "Prontera Field 2", "Prontera Field 3", "Prontera Field 4", "Prontera Field 5", "Prontera Field 6", "Prontera Field 7", "Prontera Field 8", "Prontera Field 9", "Prontera Field 10", "Prontera Field 11";
+	setarray @FXcoords[@Fref], 208, 190, 240, 190, 307, 239, 185, 193, 187, 210, 195, 198;
+	setarray @FYcoords[@Fref], 227, 206, 206, 143, 252, 213, 188, 194, 218, 183, 149, 164;
+
+	QWS_Make_Field_Menu;
+
+//----------------MJOLNIR FIELDS
+	setarray @pFmenuitems$[@Fi], "Mjolnir Fields";
+	setarray @pFprice[@Fi], $QW_FW_PRICE;
+	setarray @FCount[@Fi], 12;
+
+	setarray @FGat$[@Fref], "mjolnir_01", "mjolnir_02", "mjolnir_03", "mjolnir_04", "mjolnir_05", "mjolnir_06", "mjolnir_07", "mjolnir_08", "mjolnir_09", "mjolnir_10", "mjolnir_11", "mjolnir_12";
+	setarray @FLevelName$[@Fref], "Mjolnir Field 1", "Mjolnir Field 2", "Mjolnir Field 3", "Mjolnir Field 4", "Mjolnir Field 5", "Mjolnir Field 6", "Mjolnir Field 7", "Mjolnir Field 8", "Mjolnir Field 9", "Mjolnir Field 10", "Mjolnir Field 11", "Mjolnir Field 12";
+	setarray @FXcoords[@Fref], 204, 175, 208, 179, 181, 195, 235, 188, 205, 245, 180, 196;
+	setarray @FYcoords[@Fref], 120, 193, 213, 180, 240, 270, 202, 215, 144, 223, 206, 208;
+
+	QWS_Make_Field_Menu;
+
+//----------------End of the regions
+	set @Fmenulist$[@Fj], "Exit";
+	set @Fmenuref[@Fj],57005; // 57005='dead' in hex
+	return;
+
+
+//----------------Make Field Menu Function
+
+function	QWS_Make_Field_Menu	{
+	setarray @FLocRef[@Fi], @Fref;
+	if ($QW_MapUserShow == 1) {
+		// A region row's count is the SUM over its own fields — the same thing
+		// the dungeon region rows report, and the reason nothing should read
+		// occupancy off a BRANCH row.
+		set @tempfieldusers,0;
+		set @fieldusersloop,0;
+		do {
+			set @tempfieldusers,(getmapusers(@FGat$[@Fref+@fieldusersloop]) + @tempfieldusers);
+			set @fieldusersloop, (@fieldusersloop + 1);
+		} while (@FCount[@Fi] > @fieldusersloop);
+		if (@pFprice[@Fi] != 0) set @Fmenulist$[@Fj], @pFmenuitems$[@Fi]+" ["+@tempfieldusers+"] -> "+@pFprice[@Fi];
+		if (@pFprice[@Fi] == 0) set @Fmenulist$[@Fj], @pFmenuitems$[@Fi]+" ["+@tempfieldusers+"]";
+	}
+	if ($QW_MapUserShow == 0) {
+		if (@pFprice[@Fi] != 0) set @Fmenulist$[@Fj], @pFmenuitems$[@Fi]+" -> "+@pFprice[@Fi];
+		if (@pFprice[@Fi] == 0) set @Fmenulist$[@Fj], @pFmenuitems$[@Fi];
+	}
+	set @Fmenuref[@Fj],@Fi;
+	set @Fj,@Fj+1;
+	set @Fref,@Fref+@FCount[@Fi];
+	set @Fi,@Fi+1;
+	return;
+}
+}
+
+function	script	QWS_FLarray	{
+//----------------Start building Menu
+	set @FWref,@FLocRef[@FwarpMenu]; // reference to the arrays with fielddata
+	set @FWi,0; // loop counter
+	set @FWj,0; // menu lines counter
+	cleararray @FWLmenulist$[0],"",20; // Clearing the array to get rid off ghost items in menu
+	do {
+		if (@pFprice[@FwarpMenu] != 0)&&($QW_MapUserShow == 0) set @FWLmenulist$[@FWj], @FLevelName$[@FWref]+" -> "+@pFprice[@FwarpMenu];
+		if (@pFprice[@FwarpMenu] == 0)&&($QW_MapUserShow == 0) set @FWLmenulist$[@FWj], @FLevelName$[@FWref];
+		if (@pFprice[@FwarpMenu] != 0)&&($QW_MapUserShow == 1) set @FWLmenulist$[@FWj], @FLevelName$[@FWref]+" ["+getmapusers(@FGat$[@FWref])+"] -> "+@pFprice[@FwarpMenu];
+		if (@pFprice[@FwarpMenu] == 0)&&($QW_MapUserShow == 1) set @FWLmenulist$[@FWj], @FLevelName$[@FWref]+" ["+getmapusers(@FGat$[@FWref])+"]";
+		set @FWLmenuref[@FWj],@FWref;
+		set @FWj,@FWj+1;
+		set @FWref, @FWref+1;
+		set @FWi,@FWi+1;
+	} while (@FWi < @FCount[@FwarpMenu]);
+	set @FWLmenulist$[@FWj], "Exit";
+	set @FWLmenuref[@FWj],57005; // 57005='dead' in hex
 	return;
 }
 
