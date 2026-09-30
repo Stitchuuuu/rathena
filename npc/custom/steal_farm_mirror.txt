@@ -5,12 +5,18 @@
 //= headless run can be certified here instead of being believed there.
 //=
 //= The live warper is a quest_warper.txt derivative, so the mirror loads
-//= etc/quest_warper.txt and adds ONE duplicate of its full menu here.
-//= Two things about the stock placements make that necessary:
-//=   - the Hugel one (hugel,90,127) is a TOWN-only variant, and it is 28
-//=     cells from the Cool Event Corp save point (hugel,96,155 — see
-//=     npc/kafras/cool_event_corp.txt), well outside npc_checknear range;
-//=   - every stock placement is sprite 113, while the live one is 811.
+//= etc/quest_warper.txt and adds ONE duplicate of its full menu here. What
+//= makes that necessary is the PLACEMENT, not the sprite: the stock Hugel one
+//= (hugel,90,127) is a TOWN-only variant and sits 28 cells from the Cool Event
+//= Corp save point (hugel,96,155 — see npc/kafras/cool_event_corp.txt), well
+//= outside npc_checknear range.
+//=
+//= This header used to claim the live warper was sprite 811 against the stock
+//= 113. It was read off the LOCAL npc/custom/warper.txt ("Warper#hug", which
+//= really is 811) and assumed to hold there. A free probe against the live
+//= server on 2026-09-30 measured "Warpa Town#10" at job 113 and "Healer#hug"
+//= at job 569 — so the live server carries the STOCK sprite and the mirror now
+//= reproduces those two numbers instead.
 //=
 //= The Healer reproduces the live wording verbatim — a `mes` block, a page
 //= break, then a two-row confirm menu. The stock healer.txt cannot stand in
@@ -26,14 +32,14 @@
 
 // Full towns+dungeons menu, at the live server's name and sprite, standing
 // where the stock Warper#hug did — inside click range of the save point.
-hugel,101,151,4	duplicate(Warpra#0)	Warpa Town	811
+hugel,101,151,4	duplicate(Warpra#0)	Warpa Town	113
 
 //============================================================
 // The priced Healer. Wording is the live server's, to the comma.
 //============================================================
-hugel,89,150,6	script	Healer	909,{
+hugel,89,150,6	script	Healer	569,{
 
-	.@Price = 6750;	// Zeny required for heal — the live figure
+	.@Price = 6825;	// Zeny required for heal — measured on the live server
 	.@Buffs = 1;	// Also buff players? (1: yes / 0: no)
 
 	if (.@Price) {
