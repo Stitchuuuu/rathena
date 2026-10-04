@@ -1,0 +1,42 @@
+//===== rAthena Script =======================================
+//= Steal-Farm liar — an unnamed NPC wearing the Warper's sprite
+//===== Description: =========================================
+//= Reproduces, on a map a server can stage, the one entity that killed a
+//= production farming run.
+//=
+//= The run declared `moc_pryd05` spent and asked `_wingHome()` whether it was
+//= already at the save point. That question was answered by
+//= `findWarpa({job: 113, name: 'Warpa Town'})`, whose documented fallback
+//= resolves on the SPRITE ALONE when the name matches nothing and exactly one
+//= NPC in view carries the job. The farm map held NPC gid 110013232 —
+//= `objecttype 6`, job 113, and no name ever broadcast — so the routine was
+//= told it was home, skipped the Butterfly Wing, and spent the whole 300 s
+//= freshness wait motionless on the farm map among three 7 431-HP Minorous.
+//=
+//= Job 113 is the stock Warper sprite AND the live `Warpa Town`'s, which is why
+//= the collision is not a coincidence: a job id is whatever the script author
+//= typed, and nothing makes it unique to a role.
+//=
+//= THE NAME IS THE POINT. A name beginning with `#` has no visible part at all
+//= (an RO duplicate's hidden suffix is everything after the hash), so the client
+//= resolves this NPC's display name to the empty string — the same thing the
+//= production NPC's silence produced. It must NOT be called anything a
+//= `Warpa Town` spec could match, or it stops being the liar.
+//=
+//= Deliberately inert: `end` and nothing else. What is under test is the
+//= SIGHTING, not a dialog, and a script with a menu would let a leg succeed by
+//= accident.
+//===== Additional Comments: =================================
+//= Test server only, and LOADED ONLY BY THE `liar` ARM of
+//= src/Node/automated-tests/suites/steal-death.js, which unloads it again in a
+//= `finally`. Kept out of npc/scripts_custom.conf on purpose — a server
+//= carrying this permanently would make every `prt_fild02` rotation resolve a
+//= phantom save point. @loadnpc / @unloadnpcfile only, never @reloadscript.
+//============================================================
+
+// Three cells from the arm's landing cell (160,160), so it is inside the
+// 29-cell entity window the server broadcasts on map entry — which is where the
+// production sighting came from.
+prt_fild02,158,158,4	script	#liar113	113,{
+	end;
+}
