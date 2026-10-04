@@ -56,6 +56,8 @@
 //= @ustop <gid>                         stop its walk and its attack
 //= @uattack <gid> <target gid>          make it attack something
 //= @uskill <gid> <skill> <lv> [target]  force a cast — see the rule
+//= @uskillpos <gid> <x> <y> <skill> <lv> [cast s]
+//=                                       force a GROUND cast
 //= @uset <gid> <field> <value>          setunitdata by field name
 //= @uget <gid> <field>                  getunitdata, one field
 //= @ukill <gid>                         kill it outright
@@ -76,6 +78,8 @@ OnInit:
 	bindatcmd "ustop", strnpcinfo(3) + "::OnStop", 99, 99;
 	bindatcmd "uattack", strnpcinfo(3) + "::OnAttack", 99, 99;
 	bindatcmd "uskill", strnpcinfo(3) + "::OnSkill", 99, 99;
+	bindatcmd "uskillpos", strnpcinfo(3) + "::OnSkillPos", 99, 99;
+
 	bindatcmd "uset", strnpcinfo(3) + "::OnSet", 99, 99;
 	bindatcmd "uget", strnpcinfo(3) + "::OnGet", 99, 99;
 	bindatcmd "ukill", strnpcinfo(3) + "::OnKill", 99, 99;
@@ -174,6 +178,52 @@ OnSkill:
 	else
 		unitskilluseid .@gid, .@atcmd_parameters$[1], .@lv, .@tid;
 	message strcharinfo(0), "OK uskill " + .@gid + " " + .@atcmd_parameters$[1] + " lv" + .@lv + " -> " + .@tid;
+	end;
+
+// @uskillpos <gid> <x> <y> <skill> <lv> [cast seconds]
+// The GROUND half of @uskill, and it is not interchangeable with it:
+// unitskilluseid takes the unit-targeted path (unit_skilluse_id2), which
+// sends a cast bar carrying a TARGET and x/y 0,0. A ground skill — any
+// `TargetType: Ground` row, Hammer Fall among them — needs
+// unitskillusepos, whose cast bar names the CELL and nothing else. A
+// caller that reaches for @uskill with one of those gets a reply saying
+// OK and a packet that never mentions a cell.
+//
+// TWO ARGUMENTS EARN THEIR KEEP, and both are about staging a cast the
+// mob would not have offered:
+//
+// RANGE IS IGNORED. unit_skilluse_pos2 range-checks the target cell
+// against the skill's own Range, which is 1 for Hammer Fall — so a mob
+// three cells from the cell under test refuses, and the reply still says
+// OK. A pilot that cannot place the blow where the test needs it is no
+// pilot, so `ignore_range` is passed true.
+//
+// CAST TIME IS IN SECONDS, not milliseconds — unitskillusepos multiplies
+// by 1000 before adding skill_castfix. And it is needed because the
+// cast time a MOB uses lives in mob_skill_db.txt, which only
+// mobskill_use reads: skill_db.yml gives BS_HAMMERFALL no CastTime at
+// all, so the default here is 0 and the cast bar announces nothing to
+// react to. Omitted, the behaviour is unchanged from the skill's own
+// default.
+//
+// Same rule as @uskill: this forces the cast past mobskill_use's state
+// and condition checks, so it measures what a blow does and never when a
+// mob would have chosen it.
+OnSkillPos:
+	if (.@atcmd_numparameters < 5) { message strcharinfo(0), "ERR uskillpos usage: @uskillpos <gid> <x> <y> <skill> <lv> [cast seconds]"; end; }
+	.@gid = atoi(.@atcmd_parameters$[0]);
+	if (callsub(S_Missing, .@gid, "uskillpos")) end;
+	.@x = atoi(.@atcmd_parameters$[1]);
+	.@y = atoi(.@atcmd_parameters$[2]);
+	.@lv = atoi(.@atcmd_parameters$[4]);
+	.@cast = (.@atcmd_numparameters > 5) ? atoi(.@atcmd_parameters$[5]) : 0;
+	// Numeric ids and skill constant names both work, as in @uskill.
+	.@sk = atoi(.@atcmd_parameters$[3]);
+	if (.@sk > 0)
+		unitskillusepos .@gid, .@sk, .@lv, .@x, .@y, .@cast, 0, 0, 1;
+	else
+		unitskillusepos .@gid, .@atcmd_parameters$[3], .@lv, .@x, .@y, .@cast, 0, 0, 1;
+	message strcharinfo(0), "OK uskillpos " + .@gid + " " + .@atcmd_parameters$[3] + " lv" + .@lv + " @ " + .@x + "," + .@y + " cast " + .@cast + "s";
 	end;
 
 // @uset <gid> <field> <value>
